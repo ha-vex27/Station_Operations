@@ -1,0 +1,16 @@
+const fs=require('node:fs');const assert=require('node:assert/strict');
+const app=fs.readFileSync(new URL('../js/app.js',`file://${__filename}`),'utf8');
+const sql=fs.readFileSync(new URL('../supabase/migrations/001_core.sql',`file://${__filename}`),'utf8');
+assert.match(app,/async function saveDeposit\(form\)/);
+assert.match(app,/Attach a clear photograph of the bank receipt before submitting/);
+assert.match(app,/decision==='approve'&&\(!d\.receiptImage/);
+assert.match(app,/function stationSetupReadiness\(entry\)/);
+assert.match(app,/Pending Configuration/);
+assert.match(app,/function saveStationIdentity\(form\)/);
+assert.match(sql,/create table public\.stations/);
+assert.match(sql,/create policy supervisor_submit_banking/);
+assert.match(sql,/create or replace function public\.decide_banking/);
+assert.match(sql,/self approval prohibited/);
+assert.match(sql,/receipt evidence is missing/);
+assert.match(sql,/create policy receipt_read_authorized/);
+console.log('Smoke assertions passed. These source checks do not replace browser E2E or Supabase RLS integration tests.');

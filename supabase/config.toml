@@ -1,0 +1,15 @@
+project_id = "station-operations"
+
+[api]
+enabled = true
+
+[db]
+major_version = 15
+
+[auth]
+enabled = true
+site_url = "http://localhost:8000"
+additional_redirect_urls = ["http://localhost:8000", "https://your-production-domain.example"]
+
+[functions.provision-supervisor]
+verify_jwt = true
