@@ -1614,7 +1614,7 @@
             <div class="login-mobile-brand">${brandMarkup()}</div>
             <div class="eyebrow u-607ac117">SECURE WORKSPACE</div>
             <h2>Welcome back</h2>
-            <p class="login-lead">One sign-in for every account — your role (Manager or Supervisor) is detected from your credentials and the right workspace opens.</p>
+            <p class="login-lead">Sign in with your Supabase Manager account. This integration stage verifies cloud identity; operational records are not yet shared between devices.</p>
             ${bootRestorePending?`<div class="callout u-6bfd29cf" role="status">${icon('refresh',15)}<span>Verifying saved workspace data and checking recovery backups…</span><span class="boot-progress" aria-hidden="true"></span></div>`:''}
             ${!bootRestorePending&&defaultManagerPending()?`<div class="callout login-default-credentials" role="note">${icon('shield',15)}<span><strong>First sign-in.</strong> The system auto-configured the authorized Manager account — username <strong>${esc(DEFAULT_MANAGER_USERNAME)}</strong>, password <strong>${esc(DEFAULT_MANAGER_PASSWORD)}</strong>. You must set your own password immediately after signing in; it cannot be recovered later.</span></div>`:''}
             <form id="login-form" autocomplete="on">
@@ -2117,6 +2117,7 @@ const navGroups = [];
       });
       const navHtml = navGroups.map((entry, index) => `<div class="nav-group" role="group" aria-labelledby="nav-group-${index}"><div class="nav-group-label" id="nav-group-${index}">${esc(entry.group)}</div>${entry.items.join('')}</div>`).join('');
       const pageContent = renderPage(),stationControl=stationSwitcherMarkup();
+      const cloudBoundary=currentUser.authProvider==='supabase'?'<div class="callout form-warning cloud-boundary" role="status"><strong>Cloud sign-in only:</strong> Your identity is verified by Supabase, but station records, users, and operational changes on this screen are still stored in this browser. Do not use this build for live financial operations or assume another device can see these records.</div>':'';
       const collapsed=uiPrefs.sidebarCollapsed;
       return `<div class="app-shell ${collapsed?'is-collapsed':''} ${drawerOpen?'drawer-open':''}"><div class="activity-bar" aria-hidden="true"></div>
         <a class="skip-link" href="#main-content">Skip to content</a>
@@ -2134,7 +2135,7 @@ const navGroups = [];
             <div class="topbar-left"><button type="button" class="topbar-icon-btn drawer-toggle" data-action="toggle-drawer" aria-controls="app-sidebar" aria-expanded="${drawerOpen}" aria-label="Open navigation">${icon('menu',18)}</button>${stationControl}<div class="topbar-page-context">${breadcrumbMarkup(meta)}<div class="topbar-title">${esc(meta.title)}</div></div><button type="button" class="topbar-search" data-action="open-palette" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K" title="Search pages and actions (Ctrl K)">${icon('search',15)}<span class="topbar-search-text">Search or jump to…</span><kbd>Ctrl K</kbd></button></div>
             <div class="topbar-right">${saveStatusMarkup()}${bankingPillMarkup()}${isSupervisor()?`<button class="btn btn-accent topbar-bank-action" type="button" aria-label="Enter or update bank details" title="Enter or update bank details" data-action="supervisor-bank-entry">${icon('bank',15)}<span>Bank details</span></button>`:''}<div class="business-date">${icon('calendar', 14)}<span>${esc(dateLong(TODAY))}</span></div><span class="role-pill ${isManager() ? 'manager' : ''}">${icon(isManager() ? 'shield' : 'user', 12)}<span>${esc(roleName)}</span></span>${themeToggleMarkup()}<div class="notif-wrap"><button class="topbar-icon-btn" type="button" aria-label="Notifications${notes.length?` (${notes.length})`:''}" aria-haspopup="dialog" aria-expanded="${notificationsOpen}" title="Notifications" data-action="notifications">${icon('bell', 17)}${notes.length ? `<span class="notification-dot ${urgent?'is-urgent':''}">${notes.length}</span>` : ''}</button>${notificationsOpen?notificationPopoverMarkup(notes):''}</div></div>
           </header>
-          <div class="page-content ${animFlags.page?'anim-enter':''} ${animFlags.charts?'anim-charts':''}" id="main-content" data-page-context="${esc(activePage)}">${pageContent}<footer class="page-footer-note"><span class="storage-chip">${icon('shield', 12)} Saved in this browser’s local database · download a full backup for an off-device copy</span><span>${esc(orgName())} · prices shown come from station configuration</span></footer></div>
+          <div class="page-content ${animFlags.page?'anim-enter':''} ${animFlags.charts?'anim-charts':''}" id="main-content" data-page-context="${esc(activePage)}">${cloudBoundary}${pageContent}<footer class="page-footer-note"><span class="storage-chip">${icon('shield', 12)} Saved in this browser’s local database · download a full backup for an off-device copy</span><span>${esc(orgName())} · prices shown come from station configuration</span></footer></div>
         </main>
         ${bottomNavMarkup()}
       </div>${renderModal()}${renderToast()}${renderPalette()}`;
@@ -3058,6 +3059,18 @@ const navGroups = [];
       if(!currentUser)return;
       const busySubmit=form.querySelector('button[type="submit"]');if(busySubmit){busySubmit.disabled=true;busySubmit.setAttribute('aria-busy','true');}
       const fd=new FormData(form),current=String(fd.get('current')||''),next=String(fd.get('next')||''),confirmValue=String(fd.get('confirm')||'');
+      if(currentUser.authProvider==='supabase') {
+        const problem=passwordProblem(next);if(problem)return notify('New password is too weak',problem,true);
+        if(next!==confirmValue)return notify('Passwords do not match','Type the same new password twice.',true);
+        if(next===current)return notify('Choose a different password','The new password must differ from the current one.',true);
+        try {
+          await window.SupabaseClient.signInUsername(currentUser.username,current);
+          await window.SupabaseClient.changePassword(next);
+          await window.SupabaseClient.markPasswordChanged();
+          cloudPasswordChangeRequired=false;currentUser.mustChangePassword=false;modal=null;render();notify('Cloud password updated','Your Supabase password has been changed.');
+        } catch(error) { notify('Password change failed',String(error&&error.message||error),true); }
+        return;
+      }
       const account=currentUser.role==='manager'?managerAccount():state.users.find(user=>user.id===currentUser.id);
       if(!account)return notify('Account not found','Sign out and sign in again.',true);
       if(!await verifyPassword(account,current))return notify('Current password is incorrect','Your password was not changed.',true);
@@ -3264,6 +3277,7 @@ const navGroups = [];
     }
 
     let loginBusy=false;
+    let cloudPasswordChangeRequired=false;
     function stationSetupReadiness(entry){
       const data=entry&&entry.data||{},site=data.station||{},issues=[];
       if(!String(entry&&entry.name||'').trim()||!String(entry&&entry.location||'').trim())issues.push('station name and location');
@@ -3276,49 +3290,36 @@ const navGroups = [];
     }
     async function login(username,password) {
       if(loginBusy)return;
-      const normalized=String(username).trim().toLowerCase();
+      const normalized=String(username||'').trim().toLowerCase();
       loginBusy=true;const submit=document.querySelector('#login-form button[type="submit"]');if(submit){submit.disabled=true;submit.setAttribute('aria-busy','true');}
       let account=null;
       try{
-        await secureUserDirectory();
-        // Single combined sign-in: the credentials alone identify the account and its role.
-        // The Manager account is checked first, then the Supervisor directory; a match signs
-        // straight in and the role-appropriate dashboard is rendered.
-        const manager=managerAccount();
-        if(manager&&normalized===String(manager.username).toLowerCase()&&await verifyPassword(manager,password))account=manager;
-        if(!account){const candidate=state.users.find(user=>user.role==='supervisor'&&String(user.username).toLowerCase()===normalized);if(candidate&&await verifyPassword(candidate,password))account=candidate;}
-      }finally{loginBusy=false;}
-      if(account&&account.role==='manager'){account=sessionUser(account);}
-      if (!account) {
-        loginError='The username or password is incorrect.';clearLoginPassword=true;
-        render();
-        return;
-      }
-      if(account.role==='supervisor'){
-        const allowed=assignedStationIds(account);
-        if(!allowed.length){loginError='This Supervisor account is not assigned to a station. Ask the Manager to grant station access.';render();return;}
-        const preferred=allowed.includes(String(account.lastStationId))?String(account.lastStationId):allowed.includes(activeStationId)?activeStationId:allowed[0];
-        const entry=stationEntryById(preferred);
-        if(!entry){loginError='No assigned station is available. Ask the Manager to check this account’s station assignment.';render();return;}
-        const setup=stationSetupReadiness(entry);if(!setup.ready){loginError=`${entry.name} is Pending Configuration. Ask the Manager to complete: ${setup.issues.join(', ')}.`;render();return;}
-        activeStationId=entry.id;stationDirectory.activeStationId=entry.id;state=hydrateStationEntry(entry);account.lastStationId=entry.id;
-      }
-      currentUser=sessionUser(account,{stationIds:account.role==='supervisor'?assignedStationIds(account):undefined});
-      activePage=pendingRoute&&routeAllowed(pendingRoute)?pendingRoute:'dashboard'; pendingRoute=''; loginError=''; modal=null;animFlags.page=true;saveState();
+        if(!window.SupabaseClient||!window.SupabaseClient.configured())throw new Error('Supabase is not configured. Check js/supabase-config.js.');
+        // Cloud mode is authoritative: never fall back to browser-local credentials when cloud auth fails.
+        const result=await window.SupabaseClient.signInUsername(normalized,password);
+        const profile=result&&result.profile;
+        if(!profile||profile.role!=='manager'){
+          await window.SupabaseClient.signOut();
+          throw new Error('This account is not a Manager account. Supervisor cloud login will be enabled in a later integration stage.');
+        }
+        cloudPasswordChangeRequired=Boolean(profile.must_change_password);
+        account={id:profile.id,role:profile.role,username:normalized,name:profile.full_name||normalized,initials:initialsFor(profile.full_name||normalized),authProvider:'supabase',mustChangePassword:cloudPasswordChangeRequired,regionId:profile.region_id||null};
+      }catch(error){
+        loginError=String(error&&error.message||'Supabase sign-in failed.');clearLoginPassword=true;loginBusy=false;render();return;
+      }finally{loginBusy=false;const button=document.querySelector('#login-form button[type="submit"]');if(button){button.disabled=false;button.removeAttribute('aria-busy');}}
+      currentUser=sessionUser(account);
+      activePage='dashboard';pendingRoute='';loginError='';modal=null;animFlags.page=true;
       writeRoute(activePage,true);
       try{sessionStorage.removeItem(bankingDismissKey());}catch(e){/* ignore */}
-      render(); window.scrollTo(0,0);
-      if(isSupervisor())setTimeout(()=>maybeShowBankingAlert(),500);
-      if(account.role==='manager'&&defaultManagerPending()){
-        openModal('change-password',{forced:true});
-        notify('Set your own password','The system auto-configured this account with a default password. Replace it now to secure the workspace — this step cannot be skipped.');
-      }
+      render();window.scrollTo(0,0);
+      if(cloudPasswordChangeRequired){openModal('change-password',{forced:true});notify('Change your temporary password','Set a private password before continuing.',true);}
+      else notify('Supabase sign-in successful','Your identity was verified by Supabase. Operational records are still stored in this browser on this device; shared cloud data integration is the next stage.',true);
     }
-    function logout() { try{sessionStorage.removeItem(bankingDismissKey());}catch(e){/* ignore */} currentUser=null; activePage='dashboard'; modal=null; loginError=''; notificationsOpen=false; drawerOpen=false; try{history.replaceState(null,'',location.pathname+location.search);}catch(e){/* ignore */} animFlags.page=true; render(); }
+    function logout() { const cloud=Boolean(currentUser&&currentUser.authProvider==='supabase');try{sessionStorage.removeItem(bankingDismissKey());}catch(e){/* ignore */} currentUser=null;cloudPasswordChangeRequired=false; activePage='dashboard'; modal=null; loginError=''; notificationsOpen=false; drawerOpen=false; try{history.replaceState(null,'',location.pathname+location.search);}catch(e){/* ignore */} animFlags.page=true; render();if(cloud&&window.SupabaseClient)window.SupabaseClient.signOut().catch(()=>{}); }
     function openModal(type, data={}) { notificationsOpen=false; animFlags.modal=true; modal={type,...data}; render(); setTimeout(()=>{ const first=document.querySelector('.modal input:not([readonly]), .modal select, .modal textarea'); if(first) first.focus({preventScroll:true}); },30); }
     let closingModal=false;
     function closeModal() {
-      if(modal&&modal.type==='change-password'&&modal.forced&&defaultManagerPending()){notify('Password change required','The default Manager password must be replaced before the workspace can be used.',true);const first=document.getElementById('cp-current');if(first)first.focus({preventScroll:true});return;}
+      if(modal&&modal.type==='change-password'&&modal.forced&&(defaultManagerPending()||cloudPasswordChangeRequired)){notify('Password change required','The default Manager password must be replaced before the workspace can be used.',true);const first=document.getElementById('cp-current');if(first)first.focus({preventScroll:true});return;}
       const finish=()=>{closingModal=false;modal=null;render();if(externalReloadPending){reloadFromDatabase({quiet:true}).then(()=>notify('Records refreshed','Changes saved in another tab were loaded.'));}};
       const backdrop=document.querySelector('.modal-backdrop');
       if(!backdrop||prefersReducedMotion()){finish();return;}
